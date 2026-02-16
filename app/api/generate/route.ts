@@ -1,257 +1,127 @@
 import { NextRequest, NextResponse } from "next/server";
 
-// 服务端调用 Kimi API（API Key 不暴露给前端）
 export async function POST(request: NextRequest) {
   try {
-    const body = await request.json();
+    // 1. 解析请求体
+    let body;
+    try {
+      body = await request.json();
+    } catch (e) {
+      return NextResponse.json({ error: "Invalid request body" }, { status: 400 });
+    }
+    
     const { targetLabel, sceneLabel, whatWasSaid, fears, severity } = body;
-
-    // 从环境变量读取 API Key
+    
+    // 2. 检查 API Key
     const apiKey = process.env.KIMI_API_KEY;
     
-    // 调试信息
-    console.log('API Key check:', apiKey ? 'exists' : 'missing', 'length:', apiKey?.length);
-    console.log('Env vars:', Object.keys(process.env).filter(k => k.includes('KIMI')));
-    
+    // 3. 如果没有 API Key，返回测试数据
     if (!apiKey) {
-      // 临时返回测试数据，方便调试
       return NextResponse.json({
         comfort: '（测试模式）说错话真的太正常了，别太自责啦！谁还没个嘴瓢的时候呢。',
         话术: '「哎呀我刚才嘴瓢了，你别往心里去啊」',
         重构: '（测试模式）试着换个角度想：对方可能根本没注意到这句话。',
-        _debug: 'API Key not configured, returning mock data'
+        _debug: 'API Key not configured'
       });
     }
+    
+    // 4. 调用 Kimi API
+    try {
+      const response = await fetch('https://api.moonshot.cn/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify({
+          model: 'kimi-k2.5',
+          messages: [
+            { 
+              role: 'system', 
+              content: '你是用户的闺蜜。直接输出：1先抱抱你 2话术（用「」） 3换个角度想。不要说思考过程。' 
+            },
+            { 
+              role: 'user', 
+              content: `${sceneLabel}对${targetLabel}说错："${whatWasSaid}"，担心${fears.join('、')}，焦虑${severity}/5。给三段式回复。` 
+            }
+          ],
+          temperature: 1,
+          max_tokens: 500,
+        }),
+      });
 
-    // 更严格的系统提示，减少思考痕迹
-    const systemPrompt = `你是用户最贴心的闺蜜/兄弟。直接输出三段式回复，不要说任何思考过程、分析、或检查清单。
+      if (!response.ok) {
+        const errorText = await response.text();
+        return NextResponse.json({ 
+          error: `Kimi API error: ${response.status}`, 
+          details: errorText 
+        }, { status: 502 });
+      }
 
-【输出格式】
-1️⃣ 先抱抱你
-（写3-4句话，像朋友一样吐槽+共情，用"你"称呼用户）
-
-2️⃣ 如果补救，你可以说  
-轻松版：「自然、带点小自嘲的话，像微信聊天」
-真诚版：「简单直接的话，承认+说明」
-
-3️⃣ 换个角度想
-（写2-3句话，让对方觉得这事没那么严重）
-
-【绝对禁止】
-- 禁止出现：思考过程、分析、检查清单、禁止词汇列表
-- 禁止出现："焦虑X/5"、"需要共情"、"草稿"、"替代表达"
-- 禁止出现：第1点、第2点、或者任何分析性语言
-- 话术必须用「」包裹，不要带"轻松版："或"真诚版："前缀
-
-【正确示例】
-1️⃣ 先抱抱你
-天啊我太懂你了！那种话一出口就后悔的感觉，简直想当场消失...
-
-2️⃣ 如果补救，你可以说
-「哎呀我刚才嘴比脑子快，你别往心里去啊」
-「不好意思，刚那句话我说得不对，我是想说...」
-
-3️⃣ 换个角度想
-其实对方可能根本没注意到，就算注意到了，过几天也就忘了。`;
-
-    const userPrompt = `场景：${sceneLabel}，对${targetLabel}说错话："${whatWasSaid}"，担心：${fears.join('、')}，焦虑程度${severity}/5。
-
-直接给我三段式回复，不要说思考过程。`;
-
-    // 调用 Kimi API
-    const response = await fetch('https://api.moonshot.cn/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify({
-        model: 'kimi-k2.5',
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: userPrompt }
-        ],
-        temperature: 1,
-        max_tokens: 500,
-      }),
-    });
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.error('Kimi API Error:', response.status, errorText);
-      return NextResponse.json(
-        { error: `AI 服务暂时不可用 (${response.status})` },
-        { status: 502 }
-      );
+      const data = await response.json();
+      const rawContent = data.choices?.[0]?.message?.content || data.choices?.[0]?.message?.reasoning_content || '';
+      
+      // 5. 简单解析
+      const result = parseResponse(rawContent);
+      
+      return NextResponse.json(result);
+      
+    } catch (apiError: any) {
+      return NextResponse.json({ 
+        error: "API call failed", 
+        message: apiError.message 
+      }, { status: 500 });
     }
-
-    const data = await response.json();
-    const message = data.choices[0].message;
-    const rawContent = message.content || message.reasoning_content || '';
     
-    // 解析响应
-    const result = parseKimiResponse(rawContent);
-    
-    return NextResponse.json(result);
   } catch (error: any) {
-    console.error("Generate API Error:", error);
-    return NextResponse.json(
-      { error: error.message || "服务器内部错误" },
-      { status: 500 }
-    );
+    return NextResponse.json({ 
+      error: "Server error", 
+      message: error.message 
+    }, { status: 500 });
   }
 }
 
-// 智能解析 - 提取干净的内容
-function parseKimiResponse(rawContent: string) {
-  // 1. 先去掉可能的思考过程（找实际回复开始的位置）
-  let content = rawContent;
+// 简化解析
+function parseResponse(raw: string) {
+  const lines = raw.split('\n').filter(l => l.trim());
   
-  // 找 "开始写"、"回复"、"输出" 等标记后的内容
-  const markers = [
-    '开始写：', '开始写:', '输出：', '输出:', '回复：', '回复:',
-    '最终结果：', '最终结果:', '【回复】', '【输出】'
-  ];
+  let comfort = '';
+  let 话术 = '';
+  let 重构 = '';
   
-  for (const marker of markers) {
-    const idx = content.indexOf(marker);
-    if (idx !== -1) {
-      content = content.substring(idx + marker.length).trim();
+  // 找第一段（安慰）
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (line.match(/^1[.、]/) || line.includes('抱抱')) {
+      for (let j = i + 1; j < lines.length && j < i + 5; j++) {
+        if (!lines[j].match(/^[23][.、]/) && !lines[j].includes('话术')) {
+          comfort += lines[j] + ' ';
+        }
+      }
       break;
     }
   }
   
-  // 2. 去掉代码块标记
-  content = content.replace(/```[\s\S]*?```/g, '');
-  
-  // 3. 按行分割并清理
-  const lines = content.split('\n').map(l => l.trim()).filter(l => l);
-  
-  let comfort = '';
-  let 话术A = '';
-  let 话术B = '';
-  let 重构 = '';
-  let currentSection = '';
-  
+  // 找话术
   for (const line of lines) {
-    const lowerLine = line.toLowerCase();
-    
-    // 检测段落标记
-    if (line.match(/^1[.、️]\s*/) || line.includes('抱抱') || line.includes('先抱抱')) {
-      currentSection = 'comfort';
-      continue;
-    }
-    if (line.match(/^2[.、️]\s*/) || line.includes('话术') || line.includes('补救') || line.includes('你可以说')) {
-      currentSection = '话术';
-      continue;
-    }
-    if (line.match(/^3[.、️]\s*/) || line.includes('角度') || line.includes('换个角度')) {
-      currentSection = '重构';
-      continue;
-    }
-    
-    // 跳过分析性内容
-    if (lowerLine.includes('思考') || 
-        lowerLine.includes('分析') || 
-        lowerLine.includes('检查') ||
-        lowerLine.includes('禁止') ||
-        lowerLine.includes('草稿') ||
-        lowerLine.includes('焦虑') && lowerLine.includes('/') ||
-        lowerLine.includes('需要') && lowerLine.includes('共情') ||
-        line.match(/^\d+[.、]\s*$/)) {
-      continue;
-    }
-    
-    // 收集内容
-    if (currentSection === 'comfort') {
-      if (!line.match(/^[123]/)) {
-        comfort += line + ' ';
-      }
-    } else if (currentSection === '话术') {
-      // 提取引号内容
-      const match = line.match(/「([^」]+)」/);
-      if (match) {
-        if (!话术A) {
-          话术A = match[1];
-        } else if (!话术B) {
-          话术B = match[1];
-        }
-      }
-    } else if (currentSection === '重构') {
-      if (!line.match(/^[123]/) && !line.includes('「')) {
-        重构 += line + ' ';
-      }
+    const match = line.match(/「([^」]+)」/);
+    if (match) {
+      话术 = match[0];
+      break;
     }
   }
   
-  // 清理
-  comfort = cleanText(comfort);
-  重构 = cleanText(重构);
-  
-  // 组装话术（两个版本合并）
-  let 话术 = '';
-  if (话术A && 话术B) {
-    话术 = `「${话术A}」`;
-  } else if (话术A) {
-    话术 = `「${话术A}」`;
-  } else if (话术B) {
-    话术 = `「${话术B}」`;
-  }
-  
-  // 兜底策略
-  if (!comfort) {
-    for (const line of lines) {
-      if (line.length >= 15 && 
-          !line.includes('「') && 
-          !line.includes('思考') &&
-          !line.includes('分析') &&
-          !line.match(/^[123]/)) {
-        comfort = line;
-        break;
-      }
-    }
-  }
-  
-  if (!话术) {
-    for (const line of lines) {
-      const match = line.match(/「([^」]+)」/);
-      if (match && match[1].length < 50) {
-        话术 = `「${match[1]}」`;
-        break;
-      }
-    }
-  }
-  
-  if (!重构) {
-    for (let i = lines.length - 1; i >= 0; i--) {
-      const line = lines[i];
-      if (line.length >= 20 && 
-          line.length < 150 &&
-          !line.includes('「') && 
-          !line.match(/^[123]/) &&
-          !line.includes('思考')) {
-        重构 = line;
-        break;
-      }
+  // 找第三段（重构）
+  for (let i = lines.length - 1; i >= 0; i--) {
+    if (!lines[i].includes('「') && lines[i].length > 20) {
+      重构 = lines[i];
+      break;
     }
   }
   
   return {
-    comfort: comfort || '说错话真的太正常了，谁还没个嘴瓢的时候呢。别太自责了！',
+    comfort: comfort.trim() || '说错话太正常了，别太自责！',
     话术: 话术 || '「哎呀我刚才嘴瓢了，你别往心里去啊」',
-    重构: 重构 || '试着换个角度想：对方可能根本没注意到这句话，就算注意到了，过几天也就忘了。'
+    重构: 重构 || '换个角度想：对方可能根本没注意到。'
   };
-}
-
-// 清理文本
-function cleanText(text: string): string {
-  return text
-    .replace(/\s+/g, ' ')
-    .replace(/轻松版[：:]?\s*/gi, '')
-    .replace(/真诚版[：:]?\s*/gi, '')
-    .replace(/版本[AB][：:]?\s*/gi, '')
-    .replace(/\(适合[^)]+\)/g, '')
-    .replace(/[（(]带?有?小?自?嘲?[）)]/g, '')
-    .replace(/[（(]简单?直接?[）)]/g, '')
-    .trim();
 }
