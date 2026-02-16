@@ -14,10 +14,13 @@ export async function POST(request: NextRequest) {
     console.log('Env vars:', Object.keys(process.env).filter(k => k.includes('KIMI')));
     
     if (!apiKey) {
-      return NextResponse.json(
-        { error: "服务器未配置 API Key", needKey: true, debug: 'KIMI_API_KEY not found' },
-        { status: 500 }
-      );
+      // 临时返回测试数据，方便调试
+      return NextResponse.json({
+        comfort: '（测试模式）说错话真的太正常了，别太自责啦！谁还没个嘴瓢的时候呢。',
+        话术: '「哎呀我刚才嘴瓢了，你别往心里去啊」',
+        重构: '（测试模式）试着换个角度想：对方可能根本没注意到这句话。',
+        _debug: 'API Key not configured, returning mock data'
+      });
     }
 
     // 更严格的系统提示，减少思考痕迹
