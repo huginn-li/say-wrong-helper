@@ -9,11 +9,13 @@ export async function POST(request: NextRequest) {
     // 从环境变量读取 API Key
     const apiKey = process.env.KIMI_API_KEY;
     
+    // 调试信息
     console.log('API Key check:', apiKey ? 'exists' : 'missing', 'length:', apiKey?.length);
+    console.log('Env vars:', Object.keys(process.env).filter(k => k.includes('KIMI')));
     
     if (!apiKey) {
       return NextResponse.json(
-        { error: "服务器未配置 API Key", needKey: true },
+        { error: "服务器未配置 API Key", needKey: true, debug: 'KIMI_API_KEY not found' },
         { status: 500 }
       );
     }
